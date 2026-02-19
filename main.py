@@ -8,12 +8,24 @@ def read_table(file_path: Path, sheet_name: str | int | None = None) -> pd.DataF
     suffix = file_path.suffix.lower()
 
     if suffix == ".csv":
-        return pd.read_csv(file_path)
+        return pd.read_csv(file_path, dtype=str)
 
     if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
-        return pd.read_excel(file_path, sheet_name=sheet_name)
+        return pd.read_excel(file_path, sheet_name=sheet_name, dtype=str)
 
     raise ValueError(f"Unsupported file type: {suffix}")
+
+
+# 🔥 Strong normalization function
+def normalize_code(x):
+    if pd.isna(x):
+        return np.nan
+    return (
+        str(x)
+        .strip()
+        .replace("\xa0", "")   # remove hidden non-breaking spaces
+        .upper()
+    )
 
 
 def main() -> None:
@@ -38,7 +50,6 @@ def main() -> None:
     print(f"Rows: {len(df)}")
     print(f"Columns: {len(df.columns)}")
 
-    # Clean column names
     df.columns = df.columns.str.strip()
 
     data_columns = [
@@ -53,10 +64,10 @@ def main() -> None:
     if "OUTLET CODE" not in df.columns:
         raise ValueError("Column 'OUTLET CODE' not found")
 
-    # Prepare master OUTLET CODE set
-    valid_outlets = set(
-        df["OUTLET CODE"].dropna().astype(str).str.strip()
-    )
+    # ✅ Normalize OUTLET CODE properly
+    df["OUTLET CODE"] = df["OUTLET CODE"].apply(normalize_code)
+
+    valid_outlets = set(df["OUTLET CODE"].dropna())
 
     print("\nMaster OUTLET CODE unique count:", len(valid_outlets))
     print("===========================================\n")
@@ -69,19 +80,15 @@ def main() -> None:
 
         print(f"Processing: {col}")
 
-        # Clean safely (preserve NaN)
-        df[col] = df[col].apply(
-            lambda x: str(x).strip() if pd.notna(x) else np.nan
-        )
+        # Normalize column
+        df[col] = df[col].apply(normalize_code)
 
-        # Get non-null values
         original_values = df[col].dropna()
 
-        # Remove values that exist in OUTLET CODE
-        filtered_values = [
-            v for v in original_values
-            if v not in valid_outlets
-        ]
+        # Remove values existing in OUTLET CODE
+        filtered_values = original_values[
+            ~original_values.isin(valid_outlets)
+        ].tolist()
 
         removed_count = len(original_values) - len(filtered_values)
 
@@ -90,17 +97,12 @@ def main() -> None:
         print(f"  Remaining: {len(filtered_values)}")
         print("----------------------------------------")
 
-        # Clear entire column
+        # ✅ Replace column directly (auto shift up)
         df[col] = pd.Series(filtered_values, dtype="object")
-
-        # Shift up remaining values (no gaps)
-        if filtered_values:
-            df.loc[df.index[:len(filtered_values)], col] = filtered_values
 
     print("\n✅ Processing Complete\n")
 
-    # Save file
-    output_file = args.file.parent / "Final Slabs.csv"
+    output_file = args.file.parent / "Final Slabs V2.csv"
     df.to_csv(output_file, index=False)
 
     print(f"✅ New file saved as: {output_file}")

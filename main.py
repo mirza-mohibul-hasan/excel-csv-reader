@@ -1,0 +1,110 @@
+from pathlib import Path
+import argparse
+import pandas as pd
+import numpy as np
+
+
+def read_table(file_path: Path, sheet_name: str | int | None = None) -> pd.DataFrame:
+    suffix = file_path.suffix.lower()
+
+    if suffix == ".csv":
+        return pd.read_csv(file_path)
+
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
+        return pd.read_excel(file_path, sheet_name=sheet_name)
+
+    raise ValueError(f"Unsupported file type: {suffix}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Remove values existing in OUTLET CODE and shift remaining values up"
+    )
+    parser.add_argument("file", type=Path, help="Path to .csv/.xlsx file")
+    parser.add_argument("--sheet", default=None,
+                        help="Sheet name or index for Excel files")
+    args = parser.parse_args()
+
+    if not args.file.exists():
+        raise FileNotFoundError(f"File not found: {args.file}")
+
+    sheet = args.sheet
+    if sheet is not None and sheet.isdigit():
+        sheet = int(sheet)
+
+    df = read_table(args.file, sheet_name=sheet)
+
+    print("\n================ FILE INFO ================")
+    print(f"Rows: {len(df)}")
+    print(f"Columns: {len(df.columns)}")
+
+    # Clean column names
+    df.columns = df.columns.str.strip()
+
+    data_columns = [
+        "SKIN_CARE_GAL_GOLD",
+        "SKIN_CARE_PONDS_GOLD",
+        "HAIR_CARE_GOLD_SLAB",
+        "SKIN_CARE_GAL_DIAMOND",
+        "SKIN_CARE_PONDS_DIAMOND",
+        "HAIR_CARE_DIAMOND_SLAB"
+    ]
+
+    if "OUTLET CODE" not in df.columns:
+        raise ValueError("Column 'OUTLET CODE' not found")
+
+    # Prepare master OUTLET CODE set
+    valid_outlets = set(
+        df["OUTLET CODE"].dropna().astype(str).str.strip()
+    )
+
+    print("\nMaster OUTLET CODE unique count:", len(valid_outlets))
+    print("===========================================\n")
+
+    print("========== PROCESSING COLUMNS ==========\n")
+
+    for col in data_columns:
+        if col not in df.columns:
+            continue
+
+        print(f"Processing: {col}")
+
+        # Clean safely (preserve NaN)
+        df[col] = df[col].apply(
+            lambda x: str(x).strip() if pd.notna(x) else np.nan
+        )
+
+        # Get non-null values
+        original_values = df[col].dropna()
+
+        # Remove values that exist in OUTLET CODE
+        filtered_values = [
+            v for v in original_values
+            if v not in valid_outlets
+        ]
+
+        removed_count = len(original_values) - len(filtered_values)
+
+        print(f"  Original values: {len(original_values)}")
+        print(f"  Removed (matched OUTLET CODE): {removed_count}")
+        print(f"  Remaining: {len(filtered_values)}")
+        print("----------------------------------------")
+
+        # Clear entire column
+        df[col] = pd.Series(filtered_values, dtype="object")
+
+        # Shift up remaining values (no gaps)
+        if filtered_values:
+            df.loc[df.index[:len(filtered_values)], col] = filtered_values
+
+    print("\n✅ Processing Complete\n")
+
+    # Save file
+    output_file = args.file.parent / "Final Slabs.csv"
+    df.to_csv(output_file, index=False)
+
+    print(f"✅ New file saved as: {output_file}")
+
+
+if __name__ == "__main__":
+    main()
